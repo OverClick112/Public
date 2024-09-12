@@ -23,7 +23,7 @@ def is_chrome_running(port=9222):
             return True
     return False
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=30)
 def fetch_data():
     # Chrome 브라우저가 이미 실행 중인지 확인
     if not is_chrome_running():
