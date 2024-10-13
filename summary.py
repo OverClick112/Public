@@ -12,12 +12,12 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import altair as alt
 import numpy as np
-from summary2 import display_game_data
+from summary2 import fetch_game_data
+from summary3 import fetch_release_data
+from sales import fetch_sales_data
+from followed import fetch_followed_games_data
 
 def is_chrome_running(port=9222):
-    """
-    주어진 포트에서 Chrome이 디버그 모드로 실행 중인지 확인합니다.
-    """
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         if proc.info['name'] == 'chrome.exe' and any(f'--remote-debugging-port={port}' in cmd for cmd in proc.info['cmdline']):
             return True
@@ -25,12 +25,11 @@ def is_chrome_running(port=9222):
 
 @st.cache_data(ttl=30)
 def fetch_data():
-    # Chrome 브라우저가 이미 실행 중인지 확인
-    if not is_chrome_running():
+    if not is_chrome_running(port=9222):
         try:
-            chrome_browser = subprocess.Popen(r'C:\Program Files\Google\Chrome\Application\chrome.exe '
-                                              r'--remote-debugging-port=9222 '
-                                              r'--user-data-dir="C:\chromeCookie"')
+            subprocess.Popen(r'C:\Program Files\Google\Chrome\Application\chrome.exe '
+                             r'--remote-debugging-port=9222 '
+                             r'--user-data-dir="C:\chromeCookie"')
         except Exception as e:
             st.error(f"Chrome 디버그 모드 실행 중 오류가 발생했습니다: {e}")
             return None, None, None, None
@@ -94,7 +93,6 @@ def fetch_data():
         st.error(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
         return None, None, None, None
 
-
 def display_summary():
     st.header("SteamDB 요약 정보")
 
@@ -115,7 +113,7 @@ def display_summary():
 
     st.subheader("Choose Time Period for Breakdown Chart")
     period_options = ["Last Year", "Last 3 Years", "Last 5 Years", "Last 10 Years", "All Data"]
-    selected_period = st.select_slider("Select a period", options=period_options, value="All Data")
+    selected_period = st.select_slider("Select a period", options=period_options, value="Last 10 Years")
 
     def filter_data_by_period(df, period):
         if period == "Last Year":
@@ -172,7 +170,112 @@ def display_summary():
 
     st.altair_chart(chart, use_container_width=True)
 
-    display_game_data()
+    # Fetch sales, followed, most played, and trending data
+    sales_df = fetch_sales_data().head(15).drop(columns=['Numeric Price', 'Numeric Change'])
+    followed_df = fetch_followed_games_data().head(15)
+    most_played_df, trending_df = fetch_game_data()
+
+    # Format Follows and 7d Gain columns in followed_df
+    followed_df['Follows'] = followed_df['Follows'].apply(lambda x: f"{x:,}")
+    followed_df['7d Gain'] = followed_df['7d Gain'].apply(lambda x: f"+ {x:,}")
+
+    # Fetch yearly game release data from summary3.py
+    release_df = fetch_release_data()
+
+    # Style for tables
+    st.markdown("""
+        <style>
+        .mystyle {
+            font-size: 12px;
+            font-family: 'Arial';
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+            border: 3px solid #000;
+        }
+        .mystyle th {
+            background-color: #DCDCDC;
+            color: Black;
+            text-align: center;
+            padding: 8px;
+            border: 2px solid #000;
+        }
+        .mystyle td {
+            text-align: center;
+            padding: 6px;
+            border: 1px solid #000;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    # Display game-related data in structured format
+    st.subheader("Most Played Games & Top 15 Selling Games")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Most Played Games")
+        most_played_html = most_played_df.to_html(escape=False, formatters={
+            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+        }, index=False, classes='mystyle')
+        st.markdown(most_played_html, unsafe_allow_html=True)
+
+    with col2:
+        st.subheader("Top 15 Selling Games")
+        sales_html = sales_df.to_html(escape=False, formatters={
+            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            'Store Link': lambda x: f'<a href="{x}" target="_blank">Store Link</a>'
+        }, index=False, classes='mystyle')
+        st.markdown(sales_html, unsafe_allow_html=True)
+
+    st.subheader("Trending Games & Top 15 Followed Games")
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.subheader("Trending Games")
+        trending_html = trending_df.to_html(escape=False, formatters={
+            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+        }, index=False, classes='mystyle')
+        st.markdown(trending_html, unsafe_allow_html=True)
+
+    with col4:
+        st.subheader("Top 15 Followed Games")
+        followed_html = followed_df.to_html(escape=False, formatters={
+            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            'Video URL': lambda x: f'<a href="{x}" target="_blank">Video Link</a>'
+        }, index=False, classes='mystyle')
+        st.markdown(followed_html, unsafe_allow_html=True)
+
+    # Display yearly game release data
+    release_df = fetch_release_data()
+
+    st.subheader("Yearly Game Release Data")
+    if release_df is not None:
+        # Format Games Released column with commas
+        release_df_display = release_df.copy()
+        release_df_display['Games Released'] = release_df_display['Games Released'].apply(lambda x: f"{x:,}")
+
+        release_df_display['Year'] = release_df_display['Year'].apply(lambda x: f"{x}년")
+
+        with st.expander("Yearly Game Release Data (Click to Expand)"):
+            st.table(release_df_display)
+
+        release_df['Year'] = release_df['Year'].apply(lambda x: f"{x}년")
+
+        # Yearly release bar chart using the original DataFrame without formatting
+        chart = alt.Chart(release_df).mark_bar().encode(
+            x=alt.X('Year:O', title='Year', sort=alt.SortField(field='Year', order='ascending')),
+            y=alt.Y('Games Released:Q', title='Games Released', axis=alt.Axis(format=',d')),
+        ).properties(
+            width=800,
+            height=400,
+            title="Yearly Steam Game Releases"
+        )
+
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.error("Yearly game release data could not be loaded.")
 
 if __name__ == "__main__":
     display_summary()

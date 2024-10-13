@@ -10,8 +10,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
 import pandas as pd
+import re
 from io import BytesIO
-
 
 def is_chrome_running(port=9226):
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
@@ -20,6 +20,33 @@ def is_chrome_running(port=9226):
             return True
     return False
 
+def translate_release_date(date_str):
+    if date_str == "TBA":
+        return "추후 공지"
+    elif date_str.lower() == "soon":
+        return "출시 임박"
+    elif re.match(r'^[A-Za-z]{3} \d{4}$', date_str):
+        month_translation = {
+            "Jan": "1월", "Feb": "2월", "Mar": "3월", "Apr": "4월",
+            "May": "5월", "Jun": "6월", "Jul": "7월", "Aug": "8월",
+            "Sep": "9월", "Oct": "10월", "Nov": "11월", "Dec": "12월"
+        }
+        month, year = date_str.split()
+        return f"{year}년 {month_translation.get(month, month)}"
+    elif re.match(r'^Q[1-4] \d{4}$', date_str):
+        quarter_translation = {
+            "Q1": "1분기", "Q2": "2분기", "Q3": "3분기", "Q4": "4분기"
+        }
+        quarter, year = date_str.split()
+        return f"{year}년 {quarter_translation.get(quarter, quarter)}"
+    elif re.match(r'^\d{4}$', date_str):  # 연도만 있는 경우 "년"을 추가
+        return f"{date_str}년"
+    return date_str
+
+def format_game_name_for_url(game_name):
+    formatted_name = re.sub(r'[^\w\s]', '', game_name)
+    formatted_name = formatted_name.replace(' ', '_')
+    return formatted_name
 
 @st.cache_data(ttl=30)
 def fetch_followed_games_data():
@@ -53,49 +80,55 @@ def fetch_followed_games_data():
 
         for row in games_rows:
             game_name = row.find('a', class_='b').text.strip()
-            sub_info = row.find('i', class_='subinfo').text.strip()
 
-            followers_elem = row.find('td', class_='text-center dt-type-numeric')
-            followers = followers_elem.text.strip().replace(',', '') if followers_elem else ''
+            try:
+                price_elem = row.find_all('td', class_='dt-type-numeric')[2]
+                price = price_elem.text.strip() if price_elem.text.strip() else '—'
+            except IndexError:
+                price = '—'
 
-            trend_elem = row.find_all('td', class_='dt-type-numeric')[2]
-            trend = trend_elem.text.strip().replace('+', '').replace(',', '') if trend_elem else '0'
+            try:
+                release_date_elem = row.find_all('td', class_='dt-type-numeric')[4]
+                release_date = translate_release_date(release_date_elem.text.strip()) if release_date_elem else 'N/A'
+            except IndexError:
+                release_date = 'N/A'
 
-            price_elem = row.find_all('td', class_='dt-type-numeric')[3]
-            if price_elem:
-                price_text = price_elem.text.strip().split('\n')[0] if price_elem.text.strip() else 'N/A'
-                discount_elem = price_elem.find('span', class_='price-discount-minor')
-                discount_text = discount_elem.text.strip() if discount_elem else ''
-                final_price = f"{price_text} at {discount_text}" if discount_text else price_text
-            else:
-                final_price = 'N/A'
+            try:
+                follows_elem = row.find_all('td', class_='dt-type-numeric')[5]
+                follows = follows_elem.text.strip().replace(',', '') if follows_elem else 'N/A'
+            except IndexError:
+                follows = 'N/A'
 
-            release_date = row.find_all('td')[-1].text.strip()
+            try:
+                gain_elem = row.find_all('td', class_='green dt-type-numeric')[0]
+                gain = gain_elem.text.strip().replace(',', '') if gain_elem else '+0'
+            except IndexError:
+                gain = '+0'
 
             app_id = row['data-appid']
+            image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/capsule_231x87.jpg"
+            formatted_game_name = format_game_name_for_url(game_name)
+            video_url = f"https://store.steampowered.com/app/{app_id}/{formatted_game_name}/?curator_clanid=4777282"
 
-            image_elem = row.find('img')
-            image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/{image_elem['data-capsule']}" if image_elem and image_elem.has_attr(
-                'data-capsule') else ''
+            if game_name == 'Deadlock':
+                image_url = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1422450/cb84593a7056ddc04337c77295b33ce8d95b485e/capsule_231x87.jpg"
 
-            video_url_elem = row.find('td', class_='applogo').find('a')
-            video_url = video_url_elem['href'] if video_url_elem and 'href' in video_url_elem.attrs else ''
-
-            games_data.append([image_url, video_url, game_name, sub_info, followers, trend, final_price, release_date])
+            games_data.append([image_url, video_url, game_name, price, release_date, follows, gain])
 
         df = pd.DataFrame(games_data,
-                          columns=['Image URL', 'Video URL', 'Game Name', 'Sub Info', 'Followers', 'Trend', 'Price',
-                                   'Release Date'])
+                          columns=['Image URL', 'Video URL', 'Game Name', 'Price', 'Release Date', 'Follows', '7d Gain'])
 
         df.insert(0, 'Rank', range(1, len(df) + 1))
-        df['Rank'] = df['Rank'].astype(str)
+
+        # 'Follows'와 '7d Gain'에 포함된 쉼표 제거 후 숫자로 변환
+        df['Follows'] = pd.to_numeric(df['Follows'].replace('N/A', None), errors='coerce')
+        df['7d Gain'] = pd.to_numeric(df['7d Gain'].replace('+', '').replace(',', ''), errors='coerce')
 
         return df
 
     except Exception as e:
         st.error(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
         return None
-
 
 def convert_df_to_excel(df):
     output = BytesIO()
@@ -105,76 +138,107 @@ def convert_df_to_excel(df):
     return processed_data
 
 
+def custom_sort_key(date_str, reverse=False):
+    """
+    날짜 문자열을 기준으로 커스텀 정렬 키를 생성합니다.
+    '출시일 확정 빠른 순서'의 경우 reverse=False,
+    '출시일 확정 느린 순서'의 경우 reverse=True로 작동합니다.
+    """
+    if isinstance(date_str, str):
+        # 월이 포함된 날짜: 2024년 n월, 2025년 n월 등
+        if '월' in date_str:
+            year = int(re.search(r'(\d{4})', date_str).group())
+            month = int(re.search(r'(\d{1,2})월', date_str).group(1))
+            return (year, month) if not reverse else (year, -month)
+
+        # 분기 정렬: 1분기, 2분기 등
+        elif '분기' in date_str:
+            year = int(re.search(r'(\d{4})', date_str).group())
+            quarter = int(re.search(r'(\d)분기', date_str).group(1))
+            return (year, quarter * 3) if not reverse else (year, 12 - quarter * 3)
+
+        # "2024년 중 출시", "2025년 중 출시"로 변경
+        elif '2024년 중 출시' in date_str:
+            return (2024, 13) if not reverse else (2024, -1)
+        elif '2025년 중 출시' in date_str:
+            return (2025, 13) if not reverse else (2025, -1)
+
+        # TBA나 Soon은 마지막으로
+        elif date_str in ['TBA', 'Soon', '추후 공지', '출시 임박']:
+            return (9999, 12) if not reverse else (0, 0)
+
+    return (9999, 12) if not reverse else (0, 0)
+
+
+def update_release_date(df):
+    """
+    Release Date를 업데이트하여 2024년 또는 2025년으로 표시된 데이터는
+    '2024년 중 출시', '2025년 중 출시'로 변경합니다.
+    """
+    df['Release Date'] = df['Release Date'].apply(lambda x: x.replace('2024년', '2024년 중 출시') if '2024년' == x else x)
+    df['Release Date'] = df['Release Date'].apply(lambda x: x.replace('2025년', '2025년 중 출시') if '2025년' == x else x)
+    return df
+
 def display_followed():
     st.header("Most Followed Upcoming Steam Games")
 
     df = fetch_followed_games_data()
 
     if df is not None:
+        df = update_release_date(df)  # Release Date 업데이트
+
         st.subheader("Most Followed Games")
 
-        df['Followers'] = df['Followers'].replace(',', '', regex=True).astype(int)
-
-        df['Numeric Trend'] = pd.to_numeric(df['Trend'].str.replace(',', ''), errors='coerce').fillna(0)
-
+        # 필터 UI
         with st.sidebar:
             st.header("필터 옵션")
+            rank_filter = st.slider("Rank", min_value=int(df['Rank'].min()), max_value=int(df['Rank'].max()), value=(1, 100))
+            price_filter_option = st.selectbox("Price 정렬", ["필터 없음", "가격 오름차순", "가격 내림차순", "Free"], index=0)
+            release_date_filter_option = st.selectbox("Release Date 필터", ["필터 없음", "출시일 확정 빠른 순서", "출시일 확정 느린 순서", "출시 임박", "추후 공지"], index=0)
+            follows_filter = st.slider("Followers", min_value=int(df['Follows'].min()), max_value=int(df['Follows'].max()), value=(int(df['Follows'].min()), int(df['Follows'].max())))
+            gain_filter = st.slider("7d Gain", min_value=int(df['7d Gain'].min()), max_value=int(df['7d Gain'].max()), value=(int(df['7d Gain'].min()), int(df['7d Gain'].max())))
 
-            rank_filter = st.slider("Rank", min_value=1, max_value=250, value=(1, 250))
-
-            followers_filter = st.slider("Followers", min_value=int(df['Followers'].min()),
-                                         max_value=int(df['Followers'].max()),
-                                         value=(int(df['Followers'].min()), int(df['Followers'].max())))
-
-            trend_filter_option = st.selectbox("Trend 정렬 옵션", ["필터 없음", "오름차순", "내림차순"], index=0)
-
-            price_filter_option = st.selectbox("Price 필터", ["필터 없음", "가격", "Free", "N/A"], index=0)
-
-            release_date_filter_option = st.selectbox("Release Date 필터",
-                                                      ["필터 없음", "출시일 예정", "Coming soon", "To be announced"], index=0)
-
+        # 필터 적용
         filtered_df = df[(df['Rank'].astype(int) >= rank_filter[0]) & (df['Rank'].astype(int) <= rank_filter[1])]
 
-        filtered_df = filtered_df[
-            (df['Followers'].astype(int) >= followers_filter[0]) & (df['Followers'].astype(int) <= followers_filter[1])]
-
-        if trend_filter_option == "오름차순":
-            filtered_df = filtered_df.sort_values(by='Numeric Trend', ascending=True)
-        elif trend_filter_option == "내림차순":
-            filtered_df = filtered_df.sort_values(by='Numeric Trend', ascending=False)
-
-        if price_filter_option == "가격":
-            filtered_df = filtered_df[filtered_df['Price'].str.contains("₩")]
+        # Price 필터 적용
+        if price_filter_option == "가격 오름차순":
+            filtered_df = filtered_df[filtered_df['Price'] != '—']
+            filtered_df['Numeric Price'] = pd.to_numeric(filtered_df['Price'].str.replace('₩', '').str.replace(',', ''), errors='coerce')
+            filtered_df = filtered_df.sort_values(by='Numeric Price', ascending=True).drop(columns=['Numeric Price'])
+        elif price_filter_option == "가격 내림차순":
+            filtered_df = filtered_df[filtered_df['Price'] != '—']
+            filtered_df['Numeric Price'] = pd.to_numeric(filtered_df['Price'].str.replace('₩', '').str.replace(',', ''), errors='coerce')
+            filtered_df = filtered_df.sort_values(by='Numeric Price', ascending=False).drop(columns=['Numeric Price'])
         elif price_filter_option == "Free":
             filtered_df = filtered_df[filtered_df['Price'] == "Free"]
-        elif price_filter_option == "N/A":
-            filtered_df = filtered_df[filtered_df['Price'] == "N/A"]
 
-        if release_date_filter_option == "출시일 예정":
-            filtered_df = filtered_df[filtered_df['Release Date'].str.contains(r'\d{2} \w+ \d{4}', regex=True)]
-        elif release_date_filter_option == "Coming soon":
-            filtered_df = filtered_df[filtered_df['Release Date'] == "Coming soon"]
-        elif release_date_filter_option == "To be announced":
-            filtered_df = filtered_df[filtered_df['Release Date'] == "To be announced"]
+        # Release Date 필터 적용
+        # Release Date 필터 적용
+        if release_date_filter_option == "출시일 확정 빠른 순서":
+            filtered_df = filtered_df[~filtered_df['Release Date'].isin(['출시 임박', '추후 공지'])]
+            filtered_df = filtered_df.sort_values(by='Release Date',
+                                                  key=lambda x: x.map(lambda y: custom_sort_key(y, reverse=False)),
+                                                  ascending=True)
+        elif release_date_filter_option == "출시일 확정 느린 순서":
+            filtered_df = filtered_df[~filtered_df['Release Date'].isin(['출시 임박', '추후 공지'])]
+            filtered_df = filtered_df.sort_values(by='Release Date',
+                                                  key=lambda x: x.map(lambda y: custom_sort_key(y, reverse=True)),
+                                                  ascending=False)
+        elif release_date_filter_option == "출시 임박":
+            filtered_df = filtered_df[filtered_df['Release Date'] == "출시 임박"]
+        elif release_date_filter_option == "추후 공지":
+            filtered_df = filtered_df[filtered_df['Release Date'] == "추후 공지"]
 
-        filtered_df = filtered_df.drop(columns=['Numeric Trend'])
+        # Follows, 7d Gain 필터 적용
+        filtered_df = filtered_df[(df['Follows'] >= follows_filter[0]) & (df['Follows'] <= follows_filter[1])]
+        filtered_df = filtered_df[(df['7d Gain'] >= gain_filter[0]) & (df['7d Gain'] <= gain_filter[1])]
 
-        filtered_df['Followers'] = filtered_df['Followers'].apply(lambda x: f"{x:,}")
+        # 쉼표 추가 및 7d Gain 앞에 + 추가
+        filtered_df['Follows'] = filtered_df['Follows'].apply(lambda x: f"{x:,}")
+        filtered_df['7d Gain'] = filtered_df['7d Gain'].apply(lambda x: f"+ {x:,}")
 
-        filtered_df['Trend'] = filtered_df['Trend'].apply(lambda x: f"+{x}" if not x.startswith('-') else x)
-
-        def format_price(price):
-            if "₩" in price:
-                price_parts = price.split(' at ')
-                price_number = int(price_parts[0].replace('₩', '').replace(',', '').strip())
-                formatted_price = f"₩ {price_number:,}"
-                if len(price_parts) > 1:
-                    formatted_price += f" at {price_parts[1]}"
-                return formatted_price
-            return price
-
-        filtered_df['Price'] = filtered_df['Price'].apply(format_price)
-
+        # HTML 스타일과 함께 출력
         st.markdown("""
         <style>
         .mystyle {
@@ -220,7 +284,6 @@ def display_followed():
 
     else:
         st.error("가장 많이 팔로우된 게임 데이터를 가져오지 못했습니다.")
-
 
 if __name__ == "__main__":
     display_followed()

@@ -520,7 +520,7 @@ def generate_search_results(title, progress_bar):
 
 
 def display_title_search():
-    st.header("SteamDB 유저 통계 및 타이틀 검색")
+    st.header("키워드를 기반으로 관련된 정보의 파악이 쉽도록 모아주는 기능입니다.")
 
     title = st.text_input("검색할 게임 타이틀을 입력하세요:")
 

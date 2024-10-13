@@ -10,7 +10,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
 import pandas as pd
-
+import re
 
 def is_chrome_running(port=9223):
     """
@@ -22,6 +22,10 @@ def is_chrome_running(port=9223):
             return True
     return False
 
+def format_game_name_for_url(game_name):
+    formatted_name = re.sub(r'[^\w\s]', '', game_name)
+    formatted_name = formatted_name.replace(' ', '_')
+    return formatted_name
 
 @st.cache_data(ttl=30)
 def fetch_game_data():
@@ -33,7 +37,7 @@ def fetch_game_data():
                              r'--user-data-dir="C:\chromeCookie2"')
         except Exception as e:
             st.error(f"Chrome 디버그 모드 실행 중 오류가 발생했습니다: {e}")
-            return None
+            return None, None
 
     # Selenium 설정
     option = Options()
@@ -72,7 +76,12 @@ def fetch_game_data():
                 app_id = row['data-appid']
                 image_elem = row.find('img')
                 image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/{image_elem['data-capsule']}" if image_elem and image_elem.has_attr('data-capsule') else ''
-                detail_url = f"https://steamdb.info{row.find('a')['href']}"
+                formatted_game_name = format_game_name_for_url(game_name)
+                detail_url = f"https://store.steampowered.com/app/{app_id}/{formatted_game_name}/?curator_clanid=4777282"
+
+                # "Source SDK Base 2007"이 포함된 경우 예외 처리
+                if "Source SDK Base 2007" in game_name:
+                    image_url = "https://steamdb.info/static/img/capsules/218.jpg"
 
                 most_played_data.append([image_url, detail_url, game_name, current_players, peak_players])
             except Exception as e:
@@ -82,21 +91,49 @@ def fetch_game_data():
 
         # DataFrame 생성
         most_played_df = pd.DataFrame(most_played_data, columns=['Image URL', 'Detail URL', 'Game', 'Current Players', 'Peak Players'])
+        most_played_df.insert(0, 'Rank', range(1, len(most_played_df) + 1))  # Rank 열 추가
 
-        # 인덱스를 1부터 시작하도록 설정
-        most_played_df.index = range(1, len(most_played_df) + 1)
+        # 'Trending Games' 데이터 추출 (상위 15개만 가져오기)
+        trending_table = soup.find_all('table', {'class': 'table-products table-hover'})[1]  # 두 번째 테이블
+        trending_rows = trending_table.select('tbody tr.app')[:15]
+        trending_data = []
 
-        return most_played_df
+        for row in trending_rows:
+            try:
+                # 게임 이름
+                game_name = row.select_one('a.css-truncate').text.strip()
+
+                # 플레이어 수 (현재 플레이어 수)
+                player_now = row.select_one('td.text-center.tabular-nums').text.strip() if row.select_one('td.text-center.tabular-nums') else "N/A"
+
+                # 이미지 URL 및 앱 링크
+                app_id = row['data-appid']
+                image_elem = row.find('img')
+                image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/{image_elem['data-capsule']}" if image_elem and image_elem.has_attr('data-capsule') else ''
+                formatted_game_name = format_game_name_for_url(game_name)
+                detail_url = f"https://store.steampowered.com/app/{app_id}/{formatted_game_name}/?curator_clanid=4777282"
+
+                trending_data.append([image_url, detail_url, game_name, player_now])
+            except Exception as e:
+                # 각 행에서 오류 발생 시 메시지 출력 및 무시
+                st.write(f"Error processing row: {e}")
+                continue
+
+        # DataFrame 생성
+        trending_df = pd.DataFrame(trending_data, columns=['Image URL', 'Detail URL', 'Game', 'Players Now'])
+        trending_df.insert(0, 'Rank', range(1, len(trending_df) + 1))  # Rank 열 추가
+
+        return most_played_df, trending_df
 
     except Exception as e:
         st.error(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
-        return None
+        return None, None
 
 
 def display_game_data():
-    st.header("SteamDB Most Played Games 데이터")
+    st.header("SteamDB Most Played Games & Trending Games 데이터")
 
-    most_played_df = fetch_game_data()
+    most_played_df, trending_df = fetch_game_data()
 
     if most_played_df is not None:
         st.subheader("Most Played Games")
@@ -130,7 +167,21 @@ def display_game_data():
         st.markdown(html, unsafe_allow_html=True)
 
     else:
-        st.error("게임 데이터를 가져오지 못했습니다.")
+        st.error("Most Played Games 데이터를 가져오지 못했습니다.")
+
+    if trending_df is not None:
+        st.subheader("Trending Games")
+
+        # HTML 스타일 적용 및 이미지 및 상세 링크 추가
+        html = trending_df.to_html(escape=False, formatters={
+            'Image URL': lambda x: f'<img src="{x}" style="width:100px;"/>',
+            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+        }, index=False)
+
+        st.markdown(html, unsafe_allow_html=True)
+
+    else:
+        st.error("Trending Games 데이터를 가져오지 못했습니다.")
 
 
 if __name__ == "__main__":
