@@ -75,7 +75,12 @@ def fetch_game_data():
                 # 이미지 URL 및 앱 링크
                 app_id = row['data-appid']
                 image_elem = row.find('img')
-                image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/{image_elem['data-capsule']}" if image_elem and image_elem.has_attr('data-capsule') else ''
+                # 이미지 URL 수정: 'src'나 'data-src' 속성을 사용하는지 확인
+                if image_elem and (image_elem.has_attr('src') or image_elem.has_attr('data-src')):
+                    image_url = image_elem['src'] if image_elem.has_attr('src') else image_elem['data-src']
+                else:
+                    image_url = ''  # 이미지 URL을 찾지 못한 경우 빈 문자열로 설정
+
                 formatted_game_name = format_game_name_for_url(game_name)
                 detail_url = f"https://store.steampowered.com/app/{app_id}/{formatted_game_name}/?curator_clanid=4777282"
 
@@ -90,8 +95,8 @@ def fetch_game_data():
                 continue
 
         # DataFrame 생성
-        most_played_df = pd.DataFrame(most_played_data, columns=['Image URL', 'Detail URL', 'Game', 'Current Players', 'Peak Players'])
-        most_played_df.insert(0, 'Rank', range(1, len(most_played_df) + 1))  # Rank 열 추가
+        most_played_df = pd.DataFrame(most_played_data, columns=['이미지', '스토어 링크', '타이틀', '현재 동접', '역대 최대 동접'])
+        most_played_df.insert(0, '순위', range(1, len(most_played_df) + 1))  # Rank 열 추가
 
         # 'Trending Games' 데이터 추출 (상위 15개만 가져오기)
         trending_table = soup.find_all('table', {'class': 'table-products table-hover'})[1]  # 두 번째 테이블
@@ -109,7 +114,11 @@ def fetch_game_data():
                 # 이미지 URL 및 앱 링크
                 app_id = row['data-appid']
                 image_elem = row.find('img')
-                image_url = f"https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{app_id}/{image_elem['data-capsule']}" if image_elem and image_elem.has_attr('data-capsule') else ''
+                if image_elem and (image_elem.has_attr('src') or image_elem.has_attr('data-src')):
+                    image_url = image_elem['src'] if image_elem.has_attr('src') else image_elem['data-src']
+                else:
+                    image_url = ''  # 이미지 URL을 찾지 못한 경우 빈 문자열로 설정
+
                 formatted_game_name = format_game_name_for_url(game_name)
                 detail_url = f"https://store.steampowered.com/app/{app_id}/{formatted_game_name}/?curator_clanid=4777282"
 
@@ -120,8 +129,8 @@ def fetch_game_data():
                 continue
 
         # DataFrame 생성
-        trending_df = pd.DataFrame(trending_data, columns=['Image URL', 'Detail URL', 'Game', 'Players Now'])
-        trending_df.insert(0, 'Rank', range(1, len(trending_df) + 1))  # Rank 열 추가
+        trending_df = pd.DataFrame(trending_data, columns=['이미지', '스토어 링크', '타이틀', '현재 동접'])
+        trending_df.insert(0, '순위', range(1, len(trending_df) + 1))  # Rank 열 추가
 
         return most_played_df, trending_df
 
@@ -140,8 +149,8 @@ def display_game_data():
 
         # HTML 스타일 적용 및 이미지 및 상세 링크 추가
         html = most_played_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:100px;"/>',
-            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:100px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
         }, index=False)
 
         st.markdown("""
@@ -174,8 +183,8 @@ def display_game_data():
 
         # HTML 스타일 적용 및 이미지 및 상세 링크 추가
         html = trending_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:100px;"/>',
-            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:100px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
         }, index=False)
 
         st.markdown(html, unsafe_allow_html=True)

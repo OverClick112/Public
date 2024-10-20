@@ -94,7 +94,7 @@ def fetch_users_data():
                 break
 
         # DataFrame 생성
-        df = pd.DataFrame(games_data, columns=['Rank', 'Game Name', 'Current Players', 'Peak Today', 'Peak All Time'])
+        df = pd.DataFrame(games_data, columns=['순위', '타이틀', '현재 동접', '일일 최고 동접', '역대 최고 동접'])
 
         return df
 

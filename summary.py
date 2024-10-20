@@ -93,8 +93,14 @@ def fetch_data():
         st.error(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
         return None, None, None, None
 
+
 def display_summary():
-    st.header("SteamDB 요약 정보")
+    st.header("Steam 주요 지표 요약")
+    st.markdown("###### _- Steam 플랫폼의 주요 정보를 요약하여 모아놓은 페이지 입니다._")
+
+    st.markdown("<br><br>", unsafe_allow_html=True)  # 줄바꿈
+
+    st.markdown("#### **▶ Steam 플랫폼 현황 요약**")
 
     users_now, peak_24h, all_time_peak, df_original = fetch_data()
 
@@ -102,33 +108,59 @@ def display_summary():
         st.error("데이터를 가져오지 못했습니다.")
         return
 
-    st.write(f"**Users right now:** {users_now}")
-    st.write(f"**24-hour peak:** {peak_24h}")
-    st.write(f"**All-time peak:** {all_time_peak}")
+    # 수평으로 유저 정보 표시
+    col1, col2, col3 = st.columns(3)
 
-    with st.expander("Monthly Players Breakdown Table"):
-        st.table(df_original)
+    with col1:
+        st.metric(label="현재 유저 수", value=f"{users_now}")
+    with col2:
+        st.metric(label="24시간 최대 유저 수", value=f"{peak_24h}")
+    with col3:
+        st.metric(label="모든 기간 최대 유저 수", value=f"{all_time_peak}")
 
+    # 텍스트 크기를 작게 설정하기 위해 스타일 적용
+    st.markdown(
+        """
+        <style>
+        .css-1r6slb0.e16nr0p30 {
+            font-size: 0.8rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # 데이터 역순으로 변환
     df_reversed = df_original.iloc[::-1].reset_index(drop=True)
 
-    st.subheader("Choose Time Period for Breakdown Chart")
-    period_options = ["Last Year", "Last 3 Years", "Last 5 Years", "Last 10 Years", "All Data"]
-    selected_period = st.select_slider("Select a period", options=period_options, value="Last 10 Years")
+    st.markdown("<br>", unsafe_allow_html=True)  # 줄바꿈
+
+    # 차트 표시
+    st.markdown("#### **- 월별 유저 통계**")
 
     def filter_data_by_period(df, period):
-        if period == "Last Year":
+        if period == "최근 1년":
             return df.tail(12)
-        elif period == "Last 3 Years":
+        elif period == "지난 3년":
             return df.tail(36)
-        elif period == "Last 5 Years":
+        elif period == "지난 5년":
             return df.tail(60)
-        elif period == "Last 10 Years":
+        elif period == "지난 10년":
             return df.tail(120)
         else:
             return df
 
+    # 레이아웃 설정: 슬라이더와 통계 정보를 한 행에 배치
+    col1, _, col2 = st.columns([1, 0.1, 1])
+
+    with col1:
+        period_options = ["최근 1년", "지난 3년", "지난 5년", "지난 10년", "모든 기간"]
+        selected_period = st.select_slider("차트의 기간을 선택", options=period_options, value="지난 10년")
+
+    # 슬라이더 값에 따라 데이터 필터링
     df_filtered = filter_data_by_period(df_reversed, selected_period)
 
+    # 통계 정보 계산
     total_percentage_change = df_filtered['Percentage Change'].sum()
 
     in_game_peak_valid = df_filtered['In-Game Peak'].dropna()
@@ -139,36 +171,124 @@ def display_summary():
     else:
         in_game_peak_change_percentage = np.nan
 
-    percentage_change_label = "성장" if total_percentage_change > 0 else "하락" if total_percentage_change < 0 else ""
-    in_game_peak_label = "성장" if in_game_peak_change_percentage > 0 else "하락" if in_game_peak_change_percentage < 0 else ""
+    # 수평으로 통계 정보를 표시
+    with col2:
+        metric_col1, metric_col2 = st.columns(2)
+        with metric_col1:
+            st.metric(
+                label=f"일일 스팀 동시 접속자 수 {selected_period}",
+                value=f"{total_percentage_change:.2f}%",
+                delta="성장" if total_percentage_change > 0 else "하락"
+            )
+        with metric_col2:
+            if not np.isnan(in_game_peak_change_percentage):
+                st.metric(
+                    label=f"일일 스팀 인게임 동시 접속자 수 {selected_period}",
+                    value=f"{in_game_peak_change_percentage:.2f}%",
+                    delta="성장" if in_game_peak_change_percentage > 0 else "하락"
+                )
+            else:
+                st.write("In-Game Peak Change 데이터 부족")
 
-    st.write(f"**Total Percentage Change for {selected_period}:** {total_percentage_change:.2f}% {percentage_change_label}")
-    if not np.isnan(in_game_peak_change_percentage):
-        st.write(f"**In-Game Peak Change for {selected_period}:** {in_game_peak_change_percentage:.2f}% {in_game_peak_label}")
-    else:
-        st.write(f"**In-Game Peak Change for {selected_period}:** 데이터 부족")
-
-    st.subheader("Monthly Players Breakdown Chart")
-
-    players_line = alt.Chart(df_filtered).mark_line(point=True, color='blue').encode(
-        x=alt.X('Period', sort=None, title='Period'),
-        y=alt.Y('Players', title='Players')
+    players_line = alt.Chart(df_filtered).mark_line(point=True).encode(
+        x=alt.X('Period', sort=None, title='기간'),
+        y=alt.Y('Players', title='동시 접속자'),
+        color=alt.value('blue'),  # 라인 색상을 파란색으로 지정
+        tooltip=['Period', 'Players']  # 툴팁 추가
     )
 
-    peak_line = alt.Chart(df_filtered).mark_line(point=True, color='red').encode(
-        x=alt.X('Period', sort=None, title='Period'),
-        y=alt.Y('In-Game Peak', title='In-Game Peak')
+    # In-Game Peak 라인과 포인트
+    peak_line = alt.Chart(df_filtered).mark_line(point=True).encode(
+        x=alt.X('Period', sort=None, title='기간'),
+        y=alt.Y('In-Game Peak', title='인게임 피크'),
+        color=alt.value('purple'),  # 라인 색상을 보라색으로 지정
+        tooltip=['Period', 'In-Game Peak']  # 툴팁 추가
     )
 
-    chart = alt.layer(players_line, peak_line).resolve_scale(
-        y='shared'
+    peak_points = alt.Chart(df_filtered).mark_point().encode(
+        x=alt.X('Period', sort=None, title='기간'),
+        y=alt.Y('In-Game Peak'),
+        color=alt.value('purple'),
+        tooltip=['Period', 'In-Game Peak']  # 툴팁 추가
+    )
+
+    # 데이터를 범례에 맞게 변환
+    legend_data = df_filtered.melt(id_vars=['Period'], value_vars=['Players', 'In-Game Peak'], var_name='Type',
+                                   value_name='Value')
+
+    # 범례를 위한 색상 설정
+    color_scale = alt.Scale(
+        domain=['Players', 'In-Game Peak'],
+        range=['blue', 'purple']  # Players는 파란색, In-Game Peak은 보라색
+    )
+
+    # 범례 레이블 변경
+    legend_labels = {
+        'Players': '동시 접속자',
+        'In-Game Peak': '인게임 피크'
+    }
+
+    # 범례를 포함한 차트 생성
+    legend_chart = alt.Chart(legend_data).mark_line(point=True).encode(
+        x=alt.X('Period', sort=None, title='기간'),
+        y=alt.Y('Value', title='유저 수'),
+        color=alt.Color('Type:N', scale=color_scale, legend=alt.Legend(
+            title="데이터",
+            labelExpr="datum.label === 'Players' ? '동시 접속자' : '인게임 피크'"  # 범례 레이블 변경
+        )),
+        tooltip=['Period', 'Type', 'Value']
     ).properties(
         width=800,
-        height=400,
-        title='Monthly Players Breakdown'
+        height=400
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    # 스트림릿을 사용해 차트를 출력
+    st.altair_chart(legend_chart, use_container_width=True)
+
+    # 월별 플레이어 통계 테이블 표시
+    with st.expander("월별 유저 통계 테이블"):
+        st.table(df_filtered)
+
+    st.markdown("<br><br>", unsafe_allow_html=True)  # 줄바꿈
+
+    # Display yearly game release data
+    release_df = fetch_release_data()
+
+    st.markdown("#### **- 연간 게임 출시 수**")
+    if release_df is not None:
+        # 원본 데이터를 사용하여 차트에 데이터 표시
+        release_df['Year'] = release_df['Year'].apply(lambda x: f"{x}년")
+
+        # Yearly release bar chart with text labels
+        bar_chart = alt.Chart(release_df).mark_bar().encode(
+            x=alt.X('Year:O', title='기간', sort=alt.SortField(field='Year', order='ascending')),
+            y=alt.Y('Games Released:Q', title='출시 수', axis=alt.Axis(format=',d')),
+        ).properties(
+            width=800,
+            height=400,
+        )
+
+        # 막대 위에 텍스트를 추가해 데이터 표시
+        text = bar_chart.mark_text(
+            align='center',
+            baseline='bottom',
+            dy=-5  # 텍스트를 막대 위에 표시하기 위해 y축으로 살짝 이동
+        ).encode(
+            text=alt.Text('Games Released:Q', format=',')  # 숫자에 천 단위 콤마 추가
+        )
+
+        # 차트와 텍스트를 레이어링
+        chart_with_text = bar_chart + text
+
+        # 차트를 스트림릿에 표시
+        st.altair_chart(chart_with_text, use_container_width=True)
+
+    else:
+        st.error("Yearly game release data could not be loaded.")
+
+    st.divider()  # 구분선 추가
+    st.markdown("<br>", unsafe_allow_html=True)  # 줄바꿈
+
 
     # Fetch sales, followed, most played, and trending data
     sales_df = fetch_sales_data().head(15).drop(columns=['Numeric Price', 'Numeric Change'])
@@ -176,8 +296,8 @@ def display_summary():
     most_played_df, trending_df = fetch_game_data()
 
     # Format Follows and 7d Gain columns in followed_df
-    followed_df['Follows'] = followed_df['Follows'].apply(lambda x: f"{x:,}")
-    followed_df['7d Gain'] = followed_df['7d Gain'].apply(lambda x: f"+ {x:,}")
+    followed_df['팔로우 수'] = followed_df['팔로우 수'].apply(lambda x: f"{x:,}")
+    followed_df['팔로우 7d 변동'] = followed_df['팔로우 7d 변동'].apply(lambda x: f"+ {x:,}")
 
     # Fetch yearly game release data from summary3.py
     release_df = fetch_release_data()
@@ -209,73 +329,47 @@ def display_summary():
         """, unsafe_allow_html=True)
 
     # Display game-related data in structured format
-    st.subheader("Most Played Games & Top 15 Selling Games")
-    col1, col2 = st.columns(2)
+    st.markdown("#### **▶ Steam 트랜드 지표 요약**")
+
+    st.markdown("<br>", unsafe_allow_html=True)  # 줄바꿈
+
+    col1, col2 = st.columns([0.9, 1.2])
 
     with col1:
-        st.subheader("Most Played Games")
+        st.markdown("##### **- TOP 15 현재 유저 동접 순위**")
         most_played_html = most_played_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
-            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Store</a>'
         }, index=False, classes='mystyle')
         st.markdown(most_played_html, unsafe_allow_html=True)
 
     with col2:
-        st.subheader("Top 15 Selling Games")
+        st.markdown("##### **- Top 15 게임 매출 순위**")
         sales_html = sales_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
-            'Store Link': lambda x: f'<a href="{x}" target="_blank">Store Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Store</a>'
         }, index=False, classes='mystyle')
         st.markdown(sales_html, unsafe_allow_html=True)
 
-    st.subheader("Trending Games & Top 15 Followed Games")
-    col3, col4 = st.columns(2)
+    st.markdown("<br>", unsafe_allow_html=True)  # 줄바꿈
+    col3, col4 = st.columns([0.9, 1.2])
 
     with col3:
-        st.subheader("Trending Games")
+        st.markdown("##### **- Top 15 트랜딩 게임 순위**")
         trending_html = trending_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
-            'Detail URL': lambda x: f'<a href="{x}" target="_blank">Detail Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Store</a>'
         }, index=False, classes='mystyle')
         st.markdown(trending_html, unsafe_allow_html=True)
 
     with col4:
-        st.subheader("Top 15 Followed Games")
+        st.markdown("##### **- Top 15 팔로우 게임 순위**")
         followed_html = followed_df.to_html(escape=False, formatters={
-            'Image URL': lambda x: f'<img src="{x}" style="width:80px;"/>',
-            'Video URL': lambda x: f'<a href="{x}" target="_blank">Video Link</a>'
+            '이미지': lambda x: f'<img src="{x}" style="width:80px;"/>',
+            '스토어 링크': lambda x: f'<a href="{x}" target="_blank">Store</a>'
         }, index=False, classes='mystyle')
         st.markdown(followed_html, unsafe_allow_html=True)
 
-    # Display yearly game release data
-    release_df = fetch_release_data()
-
-    st.subheader("Yearly Game Release Data")
-    if release_df is not None:
-        # Format Games Released column with commas
-        release_df_display = release_df.copy()
-        release_df_display['Games Released'] = release_df_display['Games Released'].apply(lambda x: f"{x:,}")
-
-        release_df_display['Year'] = release_df_display['Year'].apply(lambda x: f"{x}년")
-
-        with st.expander("Yearly Game Release Data (Click to Expand)"):
-            st.table(release_df_display)
-
-        release_df['Year'] = release_df['Year'].apply(lambda x: f"{x}년")
-
-        # Yearly release bar chart using the original DataFrame without formatting
-        chart = alt.Chart(release_df).mark_bar().encode(
-            x=alt.X('Year:O', title='Year', sort=alt.SortField(field='Year', order='ascending')),
-            y=alt.Y('Games Released:Q', title='Games Released', axis=alt.Axis(format=',d')),
-        ).properties(
-            width=800,
-            height=400,
-            title="Yearly Steam Game Releases"
-        )
-
-        st.altair_chart(chart, use_container_width=True)
-    else:
-        st.error("Yearly game release data could not be loaded.")
 
 if __name__ == "__main__":
     display_summary()
